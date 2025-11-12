@@ -21,74 +21,95 @@ const SpinnerIcon = () => (
     <path
       className="opacity-75"
       fill="currentColor"
-      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0
-      c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
     ></path>
   </svg>
 );
 
 function RepaymentScheduleModal({ isOpen, onClose, applicationId }) {
   const [scheduleData, setScheduleData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (isOpen && applicationId) {
-      const fetchSchedule = async () => {
-        setLoading(true);
-        setError('');
-        try {
-          const res = await api.get(
-            `/applications/my-applications/${applicationId}/schedule`
-          );
-          setScheduleData(res.data);
-        } catch (err) {
-          setError(
-            err.response?.data?.message || 'Failed to load repayment schedule.'
-          );
-          console.error('Schedule fetch error:', err);
-        } finally {
-          setLoading(false);
-        }
-      };
-      fetchSchedule();
+    if (!isOpen) return;
+
+    if (!applicationId) {
+      setError('Missing application id.');
+      return;
     }
+
+    let mounted = true;
+    const fetchSchedule = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const res = await api.get(
+          `/applications/my-applications/${applicationId}/schedule`
+        );
+        if (mounted) setScheduleData(res.data || null);
+      } catch (err) {
+        const msg =
+          err?.response?.data?.message ||
+          err?.message ||
+          'Failed to load repayment schedule.';
+        if (mounted) setError(msg);
+        console.error('Schedule fetch error:', err);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    fetchSchedule();
+
+    return () => {
+      mounted = false;
+    };
   }, [isOpen, applicationId]);
 
-  // Helper for formatting currency
-  const formatCurrency = (value) =>
-    value
-      ? `₹${Number(value).toLocaleString(undefined, {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        })}`
-      : '₹0.00';
+  const formatCurrency = (value) => {
+    const num = Number(value);
+    if (Number.isNaN(num)) return '₹0.00';
+    return `₹${num.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  };
 
-  // Helper to format dates
-  const formatDate = (date) => {
-    const d = new Date(date);
+  const formatDate = (input) => {
+    if (!input) return '-';
+    const d = new Date(input);
+    if (Number.isNaN(d.getTime())) return '-';
     const day = d.getDate().toString().padStart(2, '0');
     const month = (d.getMonth() + 1).toString().padStart(2, '0');
     const year = d.getFullYear();
     return `${day}/${month}/${year}`;
   };
 
-  /**
-   * Generate dates spaced 10 days apart.
-   * The first EMI date should be 10 days after startDate.
-   */
-  const generateDates = (count, startDate) => {
-    const baseDate = new Date(startDate);
+  const generateDates = (count = 0, startDate) => {
+    const base = startDate ? new Date(startDate) : new Date();
+    const baseDate = Number.isNaN(base.getTime()) ? new Date() : base;
     const dates = [];
     for (let i = 0; i < count; i++) {
-      const d = new Date(baseDate);
-      d.setDate(baseDate.getDate() + (i + 1) * 10); // first = +10 days
+      const d = new Date(baseDate.getTime());
+      d.setDate(baseDate.getDate() + (i + 1) * 10);
       dates.push(formatDate(d));
     }
     return dates;
   };
 
   if (!isOpen) return null;
+
+  const scheduleArray = Array.isArray(scheduleData?.schedule)
+    ? scheduleData.schedule
+    : [];
+
+  const startDate =
+    scheduleData?.disbursedDate || scheduleData?.startDate || new Date();
+  const dateList = generateDates(scheduleArray.length, startDate);
+
+  // Dummy penalties (you can modify the pattern)
+  const dummyPenalties = [150, 200, 250, 300, 350, 400, 450, 500];
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 animate-fade-in-fast">
@@ -128,6 +149,7 @@ function RepaymentScheduleModal({ isOpen, onClose, applicationId }) {
               <p className="mt-2 text-sm">Loading schedule...</p>
             </div>
           )}
+
           {error && (
             <div className="text-center p-6 text-red-700 bg-red-50 rounded-lg border border-red-200">
               <p className="font-semibold">Could not load schedule.</p>
@@ -135,7 +157,13 @@ function RepaymentScheduleModal({ isOpen, onClose, applicationId }) {
             </div>
           )}
 
-          {scheduleData && !loading && !error && (
+          {!loading && !error && scheduleArray.length === 0 && (
+            <div className="text-center p-6 text-gray-600">
+              No repayment schedule available.
+            </div>
+          )}
+
+          {scheduleArray.length > 0 && !loading && !error && (
             <div>
               {/* Summary Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
@@ -144,23 +172,25 @@ function RepaymentScheduleModal({ isOpen, onClose, applicationId }) {
                     Monthly EMI
                   </span>
                   <strong className="text-xl font-semibold text-primary-green block mt-1">
-                    {formatCurrency(scheduleData.emi)}
+                    {formatCurrency(scheduleData?.emi)}
                   </strong>
                 </div>
+
                 <div className="bg-orange-50 p-4 rounded-lg border border-orange-200 text-center">
                   <span className="text-xs text-orange-700 uppercase tracking-wider block">
                     Total Interest
                   </span>
                   <strong className="text-xl font-semibold text-accent-orange block mt-1">
-                    {formatCurrency(scheduleData.totalInterest)}
+                    {formatCurrency(scheduleData?.totalInterest)}
                   </strong>
                 </div>
+
                 <div className="bg-gray-100 p-4 rounded-lg border border-gray-200 text-center">
                   <span className="text-xs text-gray-600 uppercase tracking-wider block">
                     Total Payment
                   </span>
                   <strong className="text-xl font-semibold text-gray-800 block mt-1">
-                    {formatCurrency(scheduleData.totalPayment)}
+                    {formatCurrency(scheduleData?.totalPayment)}
                   </strong>
                 </div>
               </div>
@@ -170,63 +200,90 @@ function RepaymentScheduleModal({ isOpen, onClose, applicationId }) {
                 <table className="w-full text-sm text-left text-gray-700">
                   <thead className="text-xs text-gray-500 uppercase bg-gray-100">
                     <tr>
-                      <th className="px-4 py-3 font-medium text-center w-16">Month</th>
-                      <th className="px-4 py-3 font-medium text-center w-28">Date</th>
-                      <th className="px-4 py-3 font-medium text-right">Principal Paid</th>
-                      <th className="px-4 py-3 font-medium text-right">Interest Paid</th>
-                      <th className="px-4 py-3 font-medium text-right">Total Payment</th>
-                      <th className="px-4 py-3 font-medium text-center">Payment Link</th>
-                      <th className="px-4 py-3 font-medium text-right">Remaining Balance</th>
+                      <th className="px-4 py-3 text-center">Month</th>
+                      <th className="px-4 py-3 text-center">Date</th>
+                      <th className="px-4 py-3 text-right">Principal Paid</th>
+                      <th className="px-4 py-3 text-right">Interest Paid</th>
+                      <th className="px-4 py-3 text-right">Penalty</th>
+                      <th className="px-4 py-3 text-right">Total Payment</th>
+                      <th className="px-4 py-3 text-center">Payment Link</th>
+                      <th className="px-4 py-3 text-right">Remaining Balance</th>
                     </tr>
                   </thead>
+
                   <tbody className="divide-y divide-gray-100">
-                    {(() => {
-                      const startDate =
-                        scheduleData.disbursedDate ||
-                        scheduleData.startDate ||
-                        new Date();
+                    {scheduleArray.map((row, index) => {
+                      const key = row?.month ?? index;
+                      const paymentHref =
+                        row?.paymentLink && typeof row.paymentLink === 'string'
+                          ? row.paymentLink
+                          : '#';
 
-                      const dateList = generateDates(
-                        scheduleData.schedule.length,
-                        startDate
-                      );
+                      // Use dummy penalty if not available
+                      const penalty =
+                        row?.penalty ??
+                        dummyPenalties[index % dummyPenalties.length];
 
-                      return scheduleData.schedule.map((row, index) => (
+                      return (
                         <tr
-                          key={row.month}
+                          key={key}
                           className="bg-white hover:bg-gray-50/50 transition-colors duration-150"
                         >
-                          <td className="px-4 py-2 font-medium text-gray-900 text-center">
-                            {row.month}
+                          <td className="px-4 py-2 text-center font-medium text-gray-900">
+                            {row?.month ?? `#${index + 1}`}
                           </td>
+
                           <td className="px-4 py-2 text-center text-gray-600">
-                            {dateList[index]}
+                            {dateList[index] ?? '-'}
                           </td>
+
                           <td className="px-4 py-2 text-right text-gray-600">
-                            {formatCurrency(row.principalPayment)}
+                            {formatCurrency(row?.principalPayment)}
                           </td>
+
                           <td className="px-4 py-2 text-right text-gray-600">
-                            {formatCurrency(row.interestPayment)}
+                            {formatCurrency(row?.interestPayment)}
                           </td>
+
+                          {/* New Penalty Column */}
+                          <td className="px-4 py-2 text-right text-gray-600">
+                            {formatCurrency(penalty)}
+                          </td>
+
                           <td className="px-4 py-2 text-right font-semibold text-gray-800">
-                            {formatCurrency(row.totalPayment)}
+                            {formatCurrency(row?.totalPayment)}
                           </td>
+
+                          {/* Pay Now Button */}
                           <td className="px-4 py-2 text-center">
-                            <a
-                              href={row.paymentLink || '#'}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="px-3 py-1 text-xs font-semibold text-white bg-primary-green rounded-lg hover:bg-green-600 transition-colors duration-150"
-                            >
-                              Pay Now
-                            </a>
+                            <div className="flex justify-center">
+                              <a
+                                href={paymentHref}
+                                target={paymentHref === '#' ? '_self' : '_blank'}
+                                rel={
+                                  paymentHref === '#'
+                                    ? undefined
+                                    : 'noopener noreferrer'
+                                }
+                                className="inline-block px-3 py-1 text-xs sm:text-sm font-semibold text-white bg-primary-green rounded-lg hover:bg-green-600 transition-colors duration-150 whitespace-nowrap"
+                                onClick={(e) => {
+                                  if (paymentHref === '#') e.preventDefault();
+                                }}
+                                aria-label={`Pay now for month ${
+                                  row?.month ?? index + 1
+                                }`}
+                              >
+                                Pay Now
+                              </a>
+                            </div>
                           </td>
+
                           <td className="px-4 py-2 text-right text-gray-600">
-                            {formatCurrency(row.balance)}
+                            {formatCurrency(row?.balance)}
                           </td>
                         </tr>
-                      ));
-                    })()}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -260,3 +317,4 @@ function RepaymentScheduleModal({ isOpen, onClose, applicationId }) {
 }
 
 export default RepaymentScheduleModal;
+
